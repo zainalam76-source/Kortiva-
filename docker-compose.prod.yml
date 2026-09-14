@@ -1,0 +1,81 @@
+# Self-hosted production stack (a VPS, a droplet, anywhere Docker runs).
+# For a managed platform (Railway/Render/Fly), deploy server/, admin/, and
+# widget/ as three separate services instead — see docs/DEPLOYMENT.md.
+#
+# Usage:
+#   cp .env.prod.example .env.prod   # fill in real secrets
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kortiva}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-kortiva}
+    volumes:
+      - kortiva_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kortiva}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  server:
+    build: ./server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kortiva}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-kortiva}?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-12h}
+      PORT: 4000
+      WIDGET_PUBLIC_URL: ${WIDGET_PUBLIC_URL}
+      API_PUBLIC_URL: ${API_PUBLIC_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      JAZZCASH_MERCHANT_ID: ${JAZZCASH_MERCHANT_ID:-}
+      JAZZCASH_PASSWORD: ${JAZZCASH_PASSWORD:-}
+      JAZZCASH_INTEGRITY_SALT: ${JAZZCASH_INTEGRITY_SALT:-}
+      EASYPAISA_STORE_ID: ${EASYPAISA_STORE_ID:-}
+      EASYPAISA_HASH_KEY: ${EASYPAISA_HASH_KEY:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  admin:
+    build:
+      context: ./admin
+      args:
+        VITE_API_URL: ${API_PUBLIC_URL}
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "5173:80"
+
+  widget:
+    build:
+      context: ./widget
+      args:
+        VITE_API_URL: ${API_PUBLIC_URL}
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "5174:80"
+
+volumes:
+  kortiva_pgdata:
